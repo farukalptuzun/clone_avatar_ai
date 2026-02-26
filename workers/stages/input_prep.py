@@ -97,7 +97,8 @@ def _extract_driving_landmarks(driving_video_path: str, out_path: str, max_frame
                 results = face_mesh.process(rgb)
                 if results.multi_face_landmarks:
                     lm = results.multi_face_landmarks[0]
-                    points = [{"x": lm.landmark[i].x, "y": lm.landmark[i].y} for i in range(min(68, len(lm.landmark)))]
+                    # Full 468 landmarks for EchoMimic pose (infer_audio2vid_pose)
+                    points = [{"x": lm.landmark[i].x, "y": lm.landmark[i].y} for i in range(len(lm.landmark))]
                     frames_landmarks.append(points)
     except (AttributeError, Exception):
         pass

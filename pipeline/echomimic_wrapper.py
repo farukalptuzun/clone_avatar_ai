@@ -1,8 +1,11 @@
 """EchoMimic + InstantID wrapper for audio-driven talking-head video.
 Supports 40GB VRAM: generate at 512/768 then upscale, or segment then concat.
-When EchoMimic is not installed, outputs a placeholder video (static frame) for pipeline testing."""
+When EchoMimic is not installed, outputs a placeholder video (static frame) for pipeline testing.
+With driving_landmarks_path, uses infer_audio2vid_pose.py for pose-driven generation."""
+import json
 import logging
 import os
+import pickle
 import re
 import shutil
 import subprocess
@@ -11,6 +14,7 @@ import time
 from pathlib import Path
 
 import cv2
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -61,50 +65,114 @@ def _placeholder_video(
     out.release()
 
 
+def _landmarks_json_to_pose_dir(
+    driving_landmarks_path: str,
+    width: int,
+    height: int,
+) -> str:
+    """Convert driving_landmarks.json (frames of {x,y} normalized) to EchoMimic pose dir (0.pkl, 1.pkl, ...).
+    Returns path to a temp dir; caller must clean up or use with context."""
+    with open(driving_landmarks_path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    frames = data.get("frames", [])
+    if not frames:
+        raise ValueError("driving_landmarks.json has no frames")
+    pose_dir = tempfile.mkdtemp(prefix="echomimic_pose_")
+    for i, frame_pts in enumerate(frames):
+        # EchoMimic draw_landmarks(..., normed=False) expects pixel coords
+        kpts = np.array(
+            [[float(p["x"]) * width, float(p["y"]) * height] for p in frame_pts],
+            dtype=np.float32,
+        )
+        with open(os.path.join(pose_dir, f"{i}.pkl"), "wb") as f:
+            pickle.dump(kpts, f)
+    return pose_dir
+
+
 def _run_echomimic(
     ref_image_path: str,
     audio_path: str,
     output_path: str,
     instantid_embed_path: str | None = None,
     driving_video_path: str | None = None,
+    driving_landmarks_path: str | None = None,
     width: int = DEFAULT_GEN_WIDTH,
     height: int = DEFAULT_GEN_HEIGHT,
     chunk_seconds: float | None = None,
 ) -> None:
-    """Run EchoMimic inference via subprocess (infer_audio2vid.py)."""
+    """Run EchoMimic inference via subprocess.
+    If driving_landmarks_path is set, uses infer_audio2vid_pose.py (pose+audio); else infer_audio2vid.py (audio only)."""
     echomimic_path = os.environ.get("ECHOMIMIC_PATH") or os.path.join(os.path.dirname(__file__), "..", "echomimic")
     echomimic_path = Path(echomimic_path).resolve()
     if not echomimic_path.is_dir():
         raise NotImplementedError("EchoMimic not found. Set ECHOMIMIC_PATH or clone echomimic repo.")
-    infer_script = echomimic_path / "infer_audio2vid.py"
-    default_config = echomimic_path / "configs" / "prompts" / "animation.yaml"
-    if not infer_script.exists():
-        raise NotImplementedError("EchoMimic infer_audio2vid.py not found.")
     ref_image_path = Path(ref_image_path).resolve()
     audio_path = Path(audio_path).resolve()
     if not ref_image_path.exists() or not audio_path.exists():
         raise FileNotFoundError("Reference image or audio not found.")
 
-    # Build config yaml: same as animation.yaml but test_cases = { ref: [audio] }
-    ref_str = str(ref_image_path).replace("\\", "/")
-    audio_str = str(audio_path).replace("\\", "/")
-    test_block = f'test_cases:\n  "{ref_str}":\n    - "{audio_str}"'
-    if default_config.exists():
-        with open(default_config, "r", encoding="utf-8") as f:
-            config_lines = f.read()
-        # Replace test_cases block: from "test_cases:" to next top-level key (line not starting with space)
-        if "test_cases:" in config_lines:
-            config_lines = re.sub(
-                r"test_cases:\s*\n(  .*\n)*",
-                test_block + "\n",
-                config_lines,
-                count=1,
-            )
+    use_pose = bool(driving_landmarks_path and Path(driving_landmarks_path).exists())
+    pose_dir_cleanup = None
+
+    if use_pose:
+        infer_script = echomimic_path / "infer_audio2vid_pose.py"
+        default_config = echomimic_path / "configs" / "prompts" / "animation_pose.yaml"
+        if not infer_script.exists():
+            raise NotImplementedError("EchoMimic infer_audio2vid_pose.py not found (required for driving video).")
+        pose_dir_cleanup = _landmarks_json_to_pose_dir(driving_landmarks_path, width, height)
+        ref_str = str(ref_image_path).replace("\\", "/")
+        audio_str = str(audio_path).replace("\\", "/")
+        pose_dir_str = str(Path(pose_dir_cleanup).resolve()).replace("\\", "/")
+        test_block = f'test_cases:\n  "{ref_str}":\n    - "{audio_str}"\n    - "{pose_dir_str}"'
+        if default_config.exists():
+            with open(default_config, "r", encoding="utf-8") as f:
+                config_lines = f.read()
+            if "test_cases:" in config_lines:
+                config_lines = re.sub(
+                    r"test_cases:\s*\n(  .*\n)*",
+                    test_block + "\n",
+                    config_lines,
+                    count=1,
+                )
+            else:
+                config_lines = config_lines.rstrip() + "\n\n" + test_block + "\n"
         else:
-            config_lines = config_lines.rstrip() + "\n\n" + test_block + "\n"
+            config_lines = f"""pretrained_base_model_path: "./pretrained_weights/sd-image-variations-diffusers"
+pretrained_vae_path: "./pretrained_weights/sd-vae-ft-mse"
+audio_model_path: "./pretrained_weights/audio_processor/whisper_tiny.pt"
+denoising_unet_path: "./pretrained_weights/denoising_unet_pose.pth"
+reference_unet_path: "./pretrained_weights/reference_unet_pose.pth"
+face_locator_path: "./pretrained_weights/face_locator_pose.pth"
+motion_module_path: "./pretrained_weights/motion_module_pose.pth"
+inference_config: "./configs/inference/inference_v2.yaml"
+weight_dtype: 'fp16'
+test_cases:
+  "{ref_str}":
+    - "{audio_str}"
+    - "{pose_dir_str}"
+"""
     else:
-        # Minimal config if repo layout differs
-        config_lines = f"""pretrained_base_model_path: "./pretrained_weights/sd-image-variations-diffusers/"
+        infer_script = echomimic_path / "infer_audio2vid.py"
+        default_config = echomimic_path / "configs" / "prompts" / "animation.yaml"
+        if not infer_script.exists():
+            raise NotImplementedError("EchoMimic infer_audio2vid.py not found.")
+        ref_str = str(ref_image_path).replace("\\", "/")
+        audio_str = str(audio_path).replace("\\", "/")
+        test_block = f'test_cases:\n  "{ref_str}":\n    - "{audio_str}"'
+        if default_config.exists():
+            with open(default_config, "r", encoding="utf-8") as f:
+                config_lines = f.read()
+            if "test_cases:" in config_lines:
+                config_lines = re.sub(
+                    r"test_cases:\s*\n(  .*\n)*",
+                    test_block + "\n",
+                    config_lines,
+                    count=1,
+                )
+            else:
+                config_lines = config_lines.rstrip() + "\n\n" + test_block + "\n"
+        else:
+            config_lines = f"""pretrained_base_model_path: "./pretrained_weights/sd-image-variations-diffusers/"
 pretrained_vae_path: "./pretrained_weights/sd-vae-ft-mse/"
 audio_model_path: "./pretrained_weights/audio_processor/whisper_tiny.pt"
 denoising_unet_path: "./pretrained_weights/denoising_unet.pth"
@@ -146,13 +214,11 @@ test_cases:
         if result.returncode != 0:
             raise RuntimeError(f"EchoMimic failed: {result.stderr or result.stdout or 'unknown'}")
 
-        # Find output: output/.../.../*_withaudio.mp4 or any recent mp4 under output/
         out_dir = echomimic_path / "output"
         if not out_dir.exists():
             raise FileNotFoundError("EchoMimic output dir missing.")
         candidates = list(out_dir.rglob("*_withaudio.mp4")) or list(out_dir.rglob("*withaudio*.mp4"))
         if not candidates:
-            # fallback: any mp4 modified in last 15 min
             cutoff = time.time() - 900
             candidates = [p for p in out_dir.rglob("*.mp4") if p.stat().st_mtime >= cutoff]
         if not candidates:
@@ -164,6 +230,11 @@ test_cases:
             os.unlink(temp_config)
         except OSError:
             pass
+        if pose_dir_cleanup and os.path.isdir(pose_dir_cleanup):
+            try:
+                shutil.rmtree(pose_dir_cleanup)
+            except OSError:
+                pass
 
 
 def generate_talking_head(
@@ -192,6 +263,7 @@ def generate_talking_head(
             output_path,
             instantid_embed_path=instantid_embed_path,
             driving_video_path=driving_video_path,
+            driving_landmarks_path=driving_landmarks_path,
             width=width,
             height=height,
             chunk_seconds=chunk_seconds,
