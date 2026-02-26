@@ -1,0 +1,58 @@
+version: "3.9"
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      STORAGE_BASE_PATH: /app/storage
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      - redis
+      - minio
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CELERY_BROKER_URL: redis://redis:6379/0
+      CELERY_RESULT_BACKEND: redis://redis:6379/0
+      S3_ENDPOINT_URL: http://minio:9000
+      STORAGE_BASE_PATH: /app/storage
+    volumes:
+      - ./storage:/app/storage
+    depends_on:
+      - redis
+      - api
+
+volumes:
+  redis_data: {}
+  minio_data: {}

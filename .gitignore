@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+.venv/
+env/
+*.egg-info/
+.eggs/
+dist/
+build/
+
+# Ortam (gizli kalmalı)
+.env
+.env.local
+.env.*.local
+
+# Storage (runtime veri)
+storage/
+*.mp4
+*.mp3
+*.npy
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs / Celery
+*.log
+celerybeat-schedule
+celerybeat.pid
+
+# EchoMimic / model weights (clone edilirse)
+echomimic/
+pretrained_weights/
+*.pth
+
+# Test / coverage
+.pytest_cache/
+.coverage
+htmlcov/
