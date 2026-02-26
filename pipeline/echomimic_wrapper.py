@@ -88,7 +88,7 @@ def _run_echomimic(
     # Build config yaml: same as animation.yaml but test_cases = { ref: [audio] }
     ref_str = str(ref_image_path).replace("\\", "/")
     audio_str = str(audio_path).replace("\\", "/")
-    test_block = f'test_cases:\n  "{ref_str}":\n  - "{audio_str}"'
+    test_block = f'test_cases:\n  "{ref_str}":\n    - "{audio_str}"'
     if default_config.exists():
         with open(default_config, "r", encoding="utf-8") as f:
             config_lines = f.read()
@@ -114,8 +114,8 @@ motion_module_path: "./pretrained_weights/motion_module.pth"
 inference_config: "./configs/inference/inference_v2.yaml"
 weight_dtype: 'fp16'
 test_cases:
-  "{ref_image_path}":
-  - "{audio_path}"
+  "{ref_str}":
+    - "{audio_str}"
 """
 
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as f:
