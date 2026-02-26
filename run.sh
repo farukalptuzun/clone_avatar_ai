@@ -148,8 +148,13 @@ fi
 # --- EchoMimic (opsiyonel: gerçek talking-head için) ---
 # Worker'ın görmesi için export et (.env'den yüklendi)
 export ECHOMIMIC_PATH="${ECHOMIMIC_PATH:-}"
+export ECHOMIMIC_PYTHON="${ECHOMIMIC_PYTHON:-}"
 if [ -n "$ECHOMIMIC_PATH" ] && [ -f "${ECHOMIMIC_PATH}/infer_audio2vid.py" ]; then
-  echo "[run.sh] EchoMimic: $ECHOMIMIC_PATH (talking-head etkin)"
+  if [ -n "$ECHOMIMIC_PYTHON" ] && [ -x "$ECHOMIMIC_PYTHON" ]; then
+    echo "[run.sh] EchoMimic: $ECHOMIMIC_PATH (python: $ECHOMIMIC_PYTHON)"
+  else
+    echo "[run.sh] EchoMimic: $ECHOMIMIC_PATH (ECHOMIMIC_PYTHON yok; torch gerekebilir)"
+  fi
 elif [ -n "$ECHOMIMIC_PATH" ]; then
   echo "[run.sh] ECHOMIMIC_PATH=$ECHOMIMIC_PATH ama infer_audio2vid.py bulunamadı; placeholder kullanılacak."
 else
