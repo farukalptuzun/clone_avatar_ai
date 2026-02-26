@@ -5,12 +5,16 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-# Optional: mediapipe for landmarks
-try:
-    import mediapipe as mp
-    HAS_MEDIAPIPE = True
-except ImportError:
-    HAS_MEDIAPIPE = False
+# Optional: mediapipe for landmarks (0.10.x legacy API; yoksa veya solutions yoksa atlanır)
+def _get_face_mesh():
+    try:
+        import mediapipe as mp
+        solutions = getattr(mp, "solutions", None)
+        if solutions is None:
+            return None
+        return getattr(solutions, "face_mesh", None)
+    except (ImportError, AttributeError):
+        return None
 
 def _quality_check(image: np.ndarray) -> str | None:
     """Returns error message if quality is bad, else None."""
@@ -49,21 +53,22 @@ def _crop_face(image: np.ndarray, bbox: tuple[int, int, int, int], margin: float
 
 
 def _landmarks_mediapipe(image: np.ndarray, face_bbox: tuple[int, int, int, int] | None) -> list[tuple[float, float]] | None:
-    """Extract 68-style landmark points using mediapipe (subset of 468). Returns list of (x,y) normalized or pixel."""
-    if not HAS_MEDIAPIPE:
+    """Extract 68-style landmark points using mediapipe (subset of 468). Returns list of (x,y) or None."""
+    mp_face_mesh = _get_face_mesh()
+    if mp_face_mesh is None:
         return None
-    mp_face_mesh = mp.solutions.face_mesh
-    h, w = image.shape[:2]
-    with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1) as face_mesh:
-        rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        results = face_mesh.process(rgb)
-        if not results.multi_face_landmarks:
-            return None
-        lm = results.multi_face_landmarks[0]
-        # Map to pixel coords; return list of (x, y) for key points (e.g. lips, eyes, contour)
-        indices = list(range(min(68, len(lm.landmark))))
-        points = [(lm.landmark[i].x * w, lm.landmark[i].y * h) for i in indices]
-        return points
+    try:
+        h, w = image.shape[:2]
+        with mp_face_mesh.FaceMesh(static_image_mode=True, max_num_faces=1) as face_mesh:
+            rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            results = face_mesh.process(rgb)
+            if not results.multi_face_landmarks:
+                return None
+            lm = results.multi_face_landmarks[0]
+            indices = list(range(min(68, len(lm.landmark))))
+            return [(lm.landmark[i].x * w, lm.landmark[i].y * h) for i in indices]
+    except (AttributeError, Exception):
+        return None
 
 
 def _save_landmarks(landmarks: list[tuple[float, float]], path: str) -> None:
@@ -75,25 +80,27 @@ def _save_landmarks(landmarks: list[tuple[float, float]], path: str) -> None:
 
 def _extract_driving_landmarks(driving_video_path: str, out_path: str, max_frames: int = 300) -> str | None:
     """Extract face landmarks per frame from driving video (for EchoMimic pose/landmark conditioning)."""
-    if not HAS_MEDIAPIPE:
+    mp_face_mesh = _get_face_mesh()
+    if mp_face_mesh is None:
         return None
     cap = cv2.VideoCapture(driving_video_path)
     if not cap.isOpened():
         return None
-    mp_face_mesh = mp.solutions.face_mesh
     frames_landmarks = []
-    with mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1) as face_mesh:
-        while len(frames_landmarks) < max_frames:
-            ret, frame = cap.read()
-            if not ret:
-                break
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            results = face_mesh.process(rgb)
-            if results.multi_face_landmarks:
-                lm = results.multi_face_landmarks[0]
-                h, w = frame.shape[:2]
-                points = [{"x": lm.landmark[i].x, "y": lm.landmark[i].y} for i in range(min(68, len(lm.landmark)))]
-                frames_landmarks.append(points)
+    try:
+        with mp_face_mesh.FaceMesh(static_image_mode=False, max_num_faces=1) as face_mesh:
+            while len(frames_landmarks) < max_frames:
+                ret, frame = cap.read()
+                if not ret:
+                    break
+                rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                results = face_mesh.process(rgb)
+                if results.multi_face_landmarks:
+                    lm = results.multi_face_landmarks[0]
+                    points = [{"x": lm.landmark[i].x, "y": lm.landmark[i].y} for i in range(min(68, len(lm.landmark)))]
+                    frames_landmarks.append(points)
+    except (AttributeError, Exception):
+        pass
     cap.release()
     if not frames_landmarks:
         return None
