@@ -10,6 +10,7 @@
 #   REDIS_URL=redis://...      (harici Redis; yoksa localhost)
 #   STORAGE_BASE_PATH=...      (WORKSPACE_ROOT varsa $WORKSPACE_ROOT/storage)
 #   API_PORT=8000
+#   NGROK_AUTHTOKEN=...        (varsa ngrok kurulur/başlar, API canlıya alınır)
 #
 # RunPod: WORKSPACE_ROOT=/workspace veya /runpod kullan; Redis yoksa run.sh dener.
 
@@ -79,8 +80,10 @@ echo "[run.sh] Storage dizinleri hazır."
 
 # --- API'yi arka planda başlat ---
 API_PID=""
+NGROK_PID=""
 cleanup() {
   echo "[run.sh] Kapatılıyor..."
+  [ -n "$NGROK_PID" ] && kill "$NGROK_PID" 2>/dev/null || true
   [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null || true
   exit 0
 }
@@ -95,6 +98,34 @@ if ! kill -0 $API_PID 2>/dev/null; then
   exit 1
 fi
 echo "[run.sh] API çalışıyor: http://0.0.0.0:$API_PORT"
+
+# --- Ngrok (NGROK_AUTHTOKEN varsa: kurulum + config + tünel) ---
+if [ -n "$NGROK_AUTHTOKEN" ]; then
+  NGROK_BIN=""
+  if command -v ngrok &>/dev/null; then
+    NGROK_BIN="ngrok"
+  else
+    echo "[run.sh] ngrok bulunamadı, indiriliyor..."
+    NGROK_DIR="${WORKSPACE_ROOT:-$PROJECT_DIR}/bin"
+    mkdir -p "$NGROK_DIR"
+    if curl -sSL --connect-timeout 10 "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" | tar xz -C "$NGROK_DIR" 2>/dev/null; then
+      NGROK_BIN="$NGROK_DIR/ngrok"
+      export PATH="$NGROK_DIR:$PATH"
+    fi
+  fi
+  if [ -n "$NGROK_BIN" ]; then
+    "$NGROK_BIN" config add-authtoken "$NGROK_AUTHTOKEN" 2>/dev/null || true
+    echo "[run.sh] Ngrok tüneli başlatılıyor (port $API_PORT)..."
+    "$NGROK_BIN" http "$API_PORT" --log=stdout &
+    NGROK_PID=$!
+    sleep 2
+    if kill -0 $NGROK_PID 2>/dev/null; then
+      echo "[run.sh] Ngrok çalışıyor; canlı URL ngrok konsolunda veya http://127.0.0.1:4040"
+    fi
+  else
+    echo "[run.sh] Ngrok kurulamadı; NGROK_AUTHTOKEN var ama ngrok yok."
+  fi
+fi
 
 # --- Celery worker (önde; script bununla sürer) ---
 echo "[run.sh] Celery worker başlatılıyor..."
