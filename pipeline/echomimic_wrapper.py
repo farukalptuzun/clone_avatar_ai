@@ -1,14 +1,18 @@
 """EchoMimic + InstantID wrapper for audio-driven talking-head video.
 Supports 40GB VRAM: generate at 512/768 then upscale, or segment then concat.
 When EchoMimic is not installed, outputs a placeholder video (static frame) for pipeline testing."""
+import logging
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 import cv2
+
+logger = logging.getLogger(__name__)
 
 
 # 40GB strategy: generate at lower res, postprocess upscales to 1080x1920
@@ -122,8 +126,9 @@ test_cases:
         env = {**os.environ, "PYTHONPATH": str(echomimic_path)}
         if os.environ.get("FFMPEG_PATH"):
             env["PATH"] = os.environ["FFMPEG_PATH"] + os.pathsep + env.get("PATH", "")
+        python_bin = os.environ.get("ECHOMIMIC_PYTHON") or "python"
         cmd = [
-            "python",
+            python_bin,
             str(infer_script),
             "--config", temp_config,
             "-W", str(width),
@@ -141,11 +146,17 @@ test_cases:
         if result.returncode != 0:
             raise RuntimeError(f"EchoMimic failed: {result.stderr or result.stdout or 'unknown'}")
 
-        # Find output: output/YYYYMMDD/HHMM--seed_*/*_withaudio.mp4 (newest)
+        # Find output: output/.../.../*_withaudio.mp4 or any recent mp4 under output/
         out_dir = echomimic_path / "output"
-        candidates = list(out_dir.glob("*/*/*_withaudio.mp4")) if out_dir.exists() else []
+        if not out_dir.exists():
+            raise FileNotFoundError("EchoMimic output dir missing.")
+        candidates = list(out_dir.rglob("*_withaudio.mp4")) or list(out_dir.rglob("*withaudio*.mp4"))
         if not candidates:
-            raise FileNotFoundError("EchoMimic did not produce output video.")
+            # fallback: any mp4 modified in last 15 min
+            cutoff = time.time() - 900
+            candidates = [p for p in out_dir.rglob("*.mp4") if p.stat().st_mtime >= cutoff]
+        if not candidates:
+            raise FileNotFoundError("EchoMimic did not produce output video (no *_withaudio.mp4 under output/).")
         latest = max(candidates, key=lambda p: p.stat().st_mtime)
         shutil.copy2(str(latest), output_path)
     finally:
@@ -186,6 +197,7 @@ def generate_talking_head(
             chunk_seconds=chunk_seconds,
         )
     except (NotImplementedError, FileNotFoundError, RuntimeError) as e:
+        logger.warning("EchoMimic fallback to placeholder: %s", e, exc_info=True)
         if use_placeholder_if_unavailable:
             _placeholder_video(ref_image_path, output_path, duration_sec, width, height)
         else:
