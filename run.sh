@@ -19,6 +19,14 @@ cd "$(dirname "$0")"
 PROJECT_DIR="$(pwd)"
 export PROJECT_DIR
 
+# --- .env yükle (NGROK_AUTHTOKEN vb. için) ---
+if [ -f "$PROJECT_DIR/.env" ]; then
+  set -a
+  # shellcheck source=/dev/null
+  source "$PROJECT_DIR/.env"
+  set +a
+fi
+
 # --- Workspace: kalıcı disk kullanıyorsa storage + venv oraya ---
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-}"
 if [ -n "$WORKSPACE_ROOT" ]; then
@@ -105,12 +113,22 @@ if [ -n "$NGROK_AUTHTOKEN" ]; then
   if command -v ngrok &>/dev/null; then
     NGROK_BIN="ngrok"
   else
-    echo "[run.sh] ngrok bulunamadı, indiriliyor..."
+    echo "[run.sh] ngrok bulunamadı, kuruluyor..."
     NGROK_DIR="${WORKSPACE_ROOT:-$PROJECT_DIR}/bin"
     mkdir -p "$NGROK_DIR"
-    if curl -sSL --connect-timeout 10 "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" | tar xz -C "$NGROK_DIR" 2>/dev/null; then
-      NGROK_BIN="$NGROK_DIR/ngrok"
-      export PATH="$NGROK_DIR:$PATH"
+    # Önce apt ile dene (Debian/Ubuntu)
+    if command -v apt-get &>/dev/null; then
+      curl -sSL https://ngrok-agent.s3.amazonaws.com/ngrok.asc 2>/dev/null | tee /etc/apt/trusted.gpg.d/ngrok.asc >/dev/null 2>&1 && \
+      echo "deb https://ngrok-agent.s3.amazonaws.com buster main" | tee /etc/apt/sources.list.d/ngrok.list >/dev/null 2>&1 && \
+      apt-get update -qq && apt-get install -y ngrok 2>/dev/null && NGROK_BIN="ngrok" || true
+    fi
+    # Apt yoksa veya başarısızsa binary indir
+    if [ -z "$NGROK_BIN" ]; then
+      NGROK_TGZ="/tmp/ngrok-v3-stable-linux-amd64.tgz"
+      if curl -sSL --connect-timeout 15 -o "$NGROK_TGZ" "https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-linux-amd64.tgz" 2>/dev/null && [ -f "$NGROK_TGZ" ]; then
+        tar xzf "$NGROK_TGZ" -C "$NGROK_DIR" 2>/dev/null && rm -f "$NGROK_TGZ"
+        [ -x "$NGROK_DIR/ngrok" ] && NGROK_BIN="$NGROK_DIR/ngrok" && export PATH="$NGROK_DIR:$PATH"
+      fi
     fi
   fi
   if [ -n "$NGROK_BIN" ]; then
@@ -118,12 +136,12 @@ if [ -n "$NGROK_AUTHTOKEN" ]; then
     echo "[run.sh] Ngrok tüneli başlatılıyor (port $API_PORT)..."
     "$NGROK_BIN" http "$API_PORT" --log=stdout &
     NGROK_PID=$!
-    sleep 2
+    sleep 3
     if kill -0 $NGROK_PID 2>/dev/null; then
-      echo "[run.sh] Ngrok çalışıyor; canlı URL ngrok konsolunda veya http://127.0.0.1:4040"
+      echo "[run.sh] Ngrok çalışıyor; canlı URL: http://127.0.0.1:4040 veya ngrok çıktısında"
     fi
   else
-    echo "[run.sh] Ngrok kurulamadı; NGROK_AUTHTOKEN var ama ngrok yok."
+    echo "[run.sh] Ngrok kurulamadı. Elle kur: https://ngrok.com/download"
   fi
 fi
 
