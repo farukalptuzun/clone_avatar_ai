@@ -65,7 +65,10 @@ async def generate_video(
             f.write(await driving_video.read())
     product_path = None
     if product_image and product_image.filename:
-        product_path = str(base / "product_image")
+        ext = Path(product_image.filename).suffix
+        if not ext or ext not in (".jpg", ".jpeg", ".png", ".webp", ".bmp"):
+            ext = ".jpg"
+        product_path = str(base / f"product_image{ext}")
         with open(product_path, "wb") as f:
             f.write(await product_image.read())
 
