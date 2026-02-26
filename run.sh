@@ -145,6 +145,13 @@ if [ -n "$NGROK_AUTHTOKEN" ]; then
   fi
 fi
 
+# --- EchoMimic (opsiyonel: gerçek talking-head için) ---
+if [ -n "${ECHOMIMIC_PATH:-}" ] && [ -f "${ECHOMIMIC_PATH}/infer_audio2vid.py" ]; then
+  echo "[run.sh] EchoMimic: $ECHOMIMIC_PATH (talking-head etkin)"
+else
+  echo "[run.sh] ECHOMIMIC_PATH yok/geçersiz; video placeholder (sabit kare) olacak."
+fi
+
 # --- Celery worker (önde; script bununla sürer) ---
 echo "[run.sh] Celery worker başlatılıyor..."
 exec celery -A workers.celery_app worker --loglevel=info

@@ -52,3 +52,6 @@ Copy `.env.example` to `.env` and adjust.
 
 **Ngrok (API’yi canlıya alma):**  
 `.env` içine `NGROK_AUTHTOKEN=<token>` ekle; `run.sh` API’yi başlattıktan sonra ngrok’u kurar (yoksa indirir), authtoken’ı yazar ve `ngrok http 8000` ile tüneli açar. Canlı URL ngrok çıktısında veya yerel `http://127.0.0.1:4040` arayüzünde görünür.
+
+**EchoMimic (gerçek talking-head):**  
+Varsayılan davranış EchoMimic yoksa placeholder video (sabit kare) üretir. Gerçek konuşan kafa için: [EchoMimic](https://github.com/antgroup/echomimic) reposunu klonlayın, pretrained ağırlıkları indirip `pretrained_weights/` içine koyun, sonra `.env` içinde `ECHOMIMIC_PATH=/path/to/echomimic` tanımlayın. Worker EchoMimic'i subprocess ile çağırır.
